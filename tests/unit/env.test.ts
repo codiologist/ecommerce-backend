@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseEnv } from '../src/config/env.js';
+import { parseEnv } from '../../src/config/env.js';
 
 const valid = {
   NODE_ENV: 'development',
@@ -10,6 +10,18 @@ const valid = {
   COOKIE_DOMAIN: 'localhost',
   DATABASE_URL: 'postgresql://u:p@localhost:6543/postgres?pgbouncer=true',
   DIRECT_URL: 'postgresql://u:p@localhost:5432/postgres',
+  REDIS_URL: 'redis://127.0.0.1:6379',
+  JWT_ACCESS_SECRET: 'j'.repeat(64),
+  CSRF_SECRET: 'c'.repeat(32),
+  TOTP_ENCRYPTION_KEY: 'f'.repeat(64),
+};
+
+const prodExtras = {
+  NODE_ENV: 'production',
+  CORS_ORIGINS: 'https://example.com',
+  TURNSTILE_SECRET_KEY: 'x',
+  RESEND_API_KEY: 're_x',
+  MAIL_FROM: 'Store <no-reply@example.com>',
 };
 
 describe('parseEnv', () => {
@@ -18,7 +30,9 @@ describe('parseEnv', () => {
     expect(env.PORT).toBe(4000);
     expect(env.TRUST_PROXY_HOPS).toBe(0);
     expect(env.CORS_ORIGINS).toEqual(['http://localhost:3000', 'http://localhost:3001']);
-    expect(env.REDIS_URL).toBeUndefined();
+    expect(env.TURNSTILE_SECRET_KEY).toBeUndefined();
+    expect(env.REFRESH_TOKEN_EXPIRES_DAYS).toBe(14);
+    expect(env.ADMIN_REFRESH_TOKEN_EXPIRES_HOURS).toBe(12);
   });
 
   it('refuses to start when required vars are missing, without printing values', () => {
@@ -43,11 +57,23 @@ describe('parseEnv', () => {
     );
   });
 
-  it('requires https CORS origins in production', () => {
-    expect(() => parseEnv({ ...valid, NODE_ENV: 'production' })).toThrow(/https/);
+  it('requires https CORS origins and production-only secrets in production', () => {
     expect(() =>
-      parseEnv({ ...valid, NODE_ENV: 'production', CORS_ORIGINS: 'https://example.com' }),
-    ).not.toThrow();
+      parseEnv({ ...valid, ...prodExtras, CORS_ORIGINS: 'http://localhost:3000' }),
+    ).toThrow(/https/);
+    expect(() => parseEnv({ ...valid, ...prodExtras, TURNSTILE_SECRET_KEY: '' })).toThrow(
+      /TURNSTILE/,
+    );
+    expect(() => parseEnv({ ...valid, ...prodExtras, RESEND_API_KEY: '' })).toThrow(/RESEND/);
+    expect(() => parseEnv({ ...valid, ...prodExtras })).not.toThrow();
+  });
+
+  it('enforces strong auth secrets', () => {
+    expect(() => parseEnv({ ...valid, JWT_ACCESS_SECRET: 'short' })).toThrow(/JWT_ACCESS_SECRET/);
+    expect(() => parseEnv({ ...valid, TOTP_ENCRYPTION_KEY: 'nothex' })).toThrow(
+      /TOTP_ENCRYPTION_KEY/,
+    );
+    expect(() => parseEnv({ ...valid, REDIS_URL: 'http://x' })).toThrow(/REDIS_URL/);
   });
 
   it('rejects non-postgres database URLs', () => {

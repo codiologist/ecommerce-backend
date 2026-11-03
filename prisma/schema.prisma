@@ -12,4 +12,143 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-// Models are added per phase. Phase 1 adds User, Session, etc.
+// Models are added per phase.
+
+// ---------------------------------------------------------------------------
+// Phase 1 — Auth & Users
+// ---------------------------------------------------------------------------
+
+enum Role {
+  CUSTOMER
+  STAFF
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+}
+
+model User {
+  id                String     @id @default(uuid()) @db.Uuid
+  /// Always stored lowercased + trimmed (normalised by the Zod schemas).
+  email             String     @unique @db.VarChar(254)
+  passwordHash      String
+  name              String     @db.VarChar(100)
+  phone             String?    @db.VarChar(20)
+  role              Role       @default(CUSTOMER)
+  status            UserStatus @default(ACTIVE)
+  emailVerifiedAt   DateTime?
+  lastLoginAt       DateTime?
+  passwordChangedAt DateTime?
+  deletedAt         DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  sessions                Session[]
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
+  twoFactorSecret         TwoFactorSecret?
+  auditLogs               AuditLog[]
+
+  @@index([role])
+  @@index([status])
+  @@index([createdAt])
+  @@index([deletedAt])
+}
+
+/// One row per refresh token. Rotation creates a new row in the same family (familyId);
+/// reuse of a rotated token revokes the whole family (requirements §3).
+model Session {
+  id                String    @id @default(uuid()) @db.Uuid
+  userId            String    @db.Uuid
+  familyId          String    @db.Uuid
+  /// SHA-256 of the opaque refresh token. The token itself is never stored.
+  tokenHash         String    @unique @db.Char(64)
+  userAgent         String?   @db.VarChar(512)
+  ip                String?   @db.VarChar(64)
+  /// Absolute expiry of the family (set at login, kept on rotation).
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  revokedReason     String?   @db.VarChar(32)
+  lastUsedAt        DateTime  @default(now())
+  /// Last successful re-authentication (sensitive actions).
+  reauthAt          DateTime?
+  twoFactorVerified Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([familyId, revokedAt])
+  @@index([expiresAt])
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique @db.Char(64)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique @db.Char(64)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model TwoFactorSecret {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String    @unique @db.Uuid
+  /// TOTP secret, AES-256-GCM encrypted with TOTP_ENCRYPTION_KEY.
+  secretEncrypted  String
+  /// null until the user confirms setup with a valid code.
+  enabledAt        DateTime?
+  /// Last accepted TOTP time step (replay protection).
+  lastUsedTimeStep Int?
+  /// SHA-256 hashes of the remaining single-use backup codes.
+  backupCodeHashes String[]
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @db.Uuid
+  action     String   @db.VarChar(64)
+  targetType String?  @db.VarChar(64)
+  targetId   String?  @db.VarChar(64)
+  metadata   Json?
+  ip         String?  @db.VarChar(64)
+  userAgent  String?  @db.VarChar(512)
+  requestId  String?  @db.VarChar(128)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+}

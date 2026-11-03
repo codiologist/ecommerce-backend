@@ -11,10 +11,28 @@ permissions:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    services:
+      # Same as docker-compose.yml (tests never touch Supabase).
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ecommerce
+          POSTGRES_PASSWORD: ecommerce_local_only
+          POSTGRES_DB: ecommerce_test
+        ports: ['54329:5432']
+        options: >-
+          --health-cmd "pg_isready -U ecommerce -d ecommerce_test"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+      redis:
+        image: redis:7-alpine
+        ports: ['63799:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 3s --health-retries 30
     env:
-      # Dummy values: CI never connects to a real database in Phase 0.
-      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?schema=app
-      DIRECT_URL: postgresql://ci:ci@localhost:5432/ci?schema=app
+      # Build-time only (prisma generate); the test DB URL is set in vitest.config.ts.
+      DATABASE_URL: postgresql://ecommerce:ecommerce_local_only@127.0.0.1:54329/ecommerce_test?schema=app
+      DIRECT_URL: postgresql://ecommerce:ecommerce_local_only@127.0.0.1:54329/ecommerce_test?schema=app
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

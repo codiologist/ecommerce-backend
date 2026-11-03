@@ -39,12 +39,26 @@ export const envSchema = z.object({
   DATABASE_URL: postgresUrl,
   DIRECT_URL: postgresUrl,
 
-  // Used from Phase 1 onward; optional for now.
-  REDIS_URL: optionalString,
-  JWT_ACCESS_SECRET: optionalString,
-  JWT_ACCESS_EXPIRES_IN: z.string().default('15m'),
+  REDIS_URL: z
+    .string()
+    .min(1)
+    .refine((value) => /^rediss?:\/\//.test(value), 'must be a redis:// or rediss:// URL'),
+
+  // Auth (requirements §3)
+  JWT_ACCESS_SECRET: z.string().min(64, 'must be at least 64 characters (use 64 random bytes)'),
+  JWT_ACCESS_EXPIRES_IN: z
+    .string()
+    .regex(/^\d+[smh]$/, 'use a duration like 15m')
+    .default('15m'),
+  JWT_ISSUER: z.string().min(1).default('ecommerce-backend'),
+  JWT_AUDIENCE: z.string().min(1).default('ecommerce-api'),
   REFRESH_TOKEN_EXPIRES_DAYS: z.coerce.number().int().min(7).max(30).default(14),
-  CSRF_SECRET: optionalString,
+  ADMIN_REFRESH_TOKEN_EXPIRES_HOURS: z.coerce.number().int().min(1).max(24).default(12),
+  CSRF_SECRET: z.string().min(32, 'must be at least 32 characters'),
+  TOTP_ENCRYPTION_KEY: z
+    .string()
+    .regex(/^[0-9a-fA-F]{64}$/, 'must be 32 bytes as 64 hex characters'),
+  TOTP_ISSUER: z.string().min(1).default('Store'),
   TURNSTILE_SECRET_KEY: optionalString,
   MAIL_FROM: optionalString,
   RESEND_API_KEY: optionalString,
@@ -67,10 +81,16 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
   }
   const env = result.data;
   if (env.NODE_ENV === 'production') {
-    const insecure = env.CORS_ORIGINS.filter((origin) => !origin.startsWith('https://'));
-    if (insecure.length > 0) {
+    const problems: string[] = [];
+    if (env.CORS_ORIGINS.some((origin) => !origin.startsWith('https://'))) {
+      problems.push('CORS_ORIGINS: must be https in production');
+    }
+    if (!env.TURNSTILE_SECRET_KEY) problems.push('TURNSTILE_SECRET_KEY: required in production');
+    if (!env.RESEND_API_KEY) problems.push('RESEND_API_KEY: required in production');
+    if (!env.MAIL_FROM) problems.push('MAIL_FROM: required in production');
+    if (problems.length > 0) {
       throw new Error(
-        'Invalid environment configuration:\n  - CORS_ORIGINS: must be https in production',
+        `Invalid environment configuration:\n${problems.map((p) => `  - ${p}`).join('\n')}`,
       );
     }
   }

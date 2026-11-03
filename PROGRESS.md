@@ -1,10 +1,10 @@
 # ecommerce-backend — Progress
 
-| Phase              | Status                                                                              |
-| ------------------ | ----------------------------------------------------------------------------------- |
-| 0. Setup (backend) | ✅ Done (2026-11-03) — real Supabase connection still to be verified, see "Pending" |
-| 1. Auth & Users    | ⏳ Not started                                                                      |
-| 2–10               | ⏳ Not started                                                                      |
+| Phase                     | Status                                       |
+| ------------------------- | -------------------------------------------- |
+| 0. Setup (backend)        | ✅ Done (2026-11-03)                         |
+| 1. Auth & Users (backend) | ✅ Done (2026-11-03) — frontend part pending |
+| 2–10                      | ⏳ Not started                               |
 
 ---
 
@@ -71,29 +71,161 @@
    DB URLs. RLS is enabled anyway.
 5. **No `BYPASSRLS`** for `app_user` (Supabase doesn't let `postgres` grant it). An `app_user`-only policy
    on each table is used instead.
-6. **Cookies:** `__Secure-` prefixes are applied only in production (`cookieName()`), because browsers reject
-   them over plain-HTTP localhost. The cookies themselves are defined in Phase 1.
+6. **Cookies:** `__Secure-` prefixes are applied only in production (`COOKIE_NAMES` in
+   `src/config/cookies.ts`), because browsers reject them over plain-HTTP localhost.
 7. Prisma 6 runs on Node 26, so there was no need to fall back to Node 24.
 
-### Pending / for you to do
+### Pending (Phase 0)
 
-- [ ] Create the Supabase project, run `prisma/sql/001_supabase_lockdown.sql` as `postgres`, set the
-      `app_user` password, and make sure `app` is **not** an exposed schema under Data API settings (or
-      disable the Data API). Confirm Supabase accepts the event trigger; if it doesn't, call
-      `SELECT public.app_enable_rls_on_all_tables();` after every migration.
-- [ ] Create `.env` from `.env.example`, using `app_user` on the pooled URL (`:6543`,
-      `?pgbouncer=true&connection_limit=5&schema=app`) and `postgres` on the direct URL
-      (`?schema=app`). Then `npm run dev` → `GET /api/v1/health` should report `database: "up"`.
-- [ ] Set up a **separate test database** for Phase 1 integration tests (§9).
-- [ ] Add a git remote, then Dependabot/Renovate (§4.2) once the repo is on GitHub.
-- [ ] Frontend Phase 0 (`ecommerce-frontend`) has not been started.
+- [x] Supabase project created; lockdown SQL applied and verified (2026-11-03): `app` schema, `app_user`
+      role, RLS event trigger confirmed working on Supabase.
+- [x] `.env` connected (health reports `database: "up"`). Runtime still uses the `postgres` role by
+      choice; switching `DATABASE_URL` to `app_user` (password not yet set) is deferred.
+- [x] Separate test database: Docker Postgres 17 (Phase 1).
+- [x] GitHub remote: https://github.com/codiologist/ecommerce-backend
+- [ ] Enable Dependabot/Renovate (§4.2) in the GitHub repo settings.
 
-### Not done on purpose (later phases)
+---
 
-Redis, rate limiting, CSRF, auth/RBAC middlewares, the `validate` middleware, mailer, OpenAPI docs
-(`/api/docs`), seed script and all models start in Phase 1 or later.
+## Phase 1 — Auth & Users (backend)
+
+### Built
+
+- **Models** (migration `20261103170252_phase1_auth_users`, `app` schema):
+  - `User`: role enum CUSTOMER / STAFF / ADMIN / SUPER_ADMIN, status ACTIVE / BLOCKED, soft delete,
+    `emailVerifiedAt`
+  - `Session`: SHA-256 `tokenHash`, `familyId`, absolute `expiresAt`, `revokedAt` / `revokedReason`,
+    `reauthAt`, `twoFactorVerified`
+  - `EmailVerificationToken` and `PasswordResetToken`: hashed, single-use
+  - `TwoFactorSecret`: AES-256-GCM encrypted secret, `lastUsedTimeStep`, hashed backup codes
+  - `AuditLog`
+  - Indexes on every FK, status/role, `createdAt` and expiry columns.
+- **Endpoints:**
+  - Auth: `GET /auth/csrf`, `POST /auth/register`, `/auth/verify-email`, `/auth/resend-verification`,
+    `/auth/login`, `/auth/login/2fa`, `/auth/refresh`, `/auth/logout`, `/auth/logout-all`,
+    `/auth/forgot-password`, `/auth/reset-password`, `/auth/reauth`, `/auth/2fa/setup`,
+    `/auth/2fa/enable`, `/auth/2fa/disable`
+  - Users: `GET|PATCH /users/me`, `POST /users/me/change-password`, `GET /users/me/sessions`,
+    `DELETE /users/me/sessions/:id`
+  - Admin: `GET /admin/session`
+  - Docs: OpenAPI 3.1 generated from the Zod schemas at `/api/docs` (Swagger UI) and `/api/docs.json`;
+    non-production only.
+- **Cookies (§3):**
+  - `access_token`: 15-min HS256 JWT; `alg`, `iss`, `aud`, `exp`, `sub`, `sid` and `iat` are verified, and
+    `alg: none` is rejected. HttpOnly, Lax, `Path=/`.
+  - `refresh_token`: opaque 256-bit value. HttpOnly, Strict, `Path=/api/v1/auth`.
+  - In production both names get the `__Secure-` prefix and the `Secure` flag.
+  - `csrf_token`: non-HttpOnly, signed double-submit token. Rotated on login and logout.
+- **Sessions:**
+  - Rotation on every refresh, with an absolute lifetime from login: 14 days, or 12h for staff and
+    admins.
+  - **Reuse detection:** a rotated token presented again after the grace window revokes the whole family,
+    with an audit entry and a warning log.
+  - **10s grace window**, so two tabs refreshing at once aren't treated as theft. The second tab gets a
+    fresh access token but no new refresh token.
+  - `authenticate` reloads the session and user from the DB on every request, so revocation, blocking and
+    role changes take effect immediately.
+- **CSRF:** on every non-GET `/api/v1` request, an Origin/Referer allowlist check plus a timing-safe
+  header-equals-cookie check plus an HMAC signature check.
+- **Brute force (Redis):**
+  - Rate limits (`429` + `Retry-After`): global 300/min per IP, `/auth/*` 100 per 15 min, login 30 per
+    15 min per IP, email-sending endpoints and register 10/h per IP.
+  - Per account (hashed email): progressive delay of 250ms × 2ⁿ, capped at 2s; Turnstile required after
+    3 failures; a 15-minute lockout after 10. Unknown emails behave identically.
+- **No enumeration:**
+  - Register, forgot-password and resend-verification give identical responses; the email work runs in a
+    background job.
+  - A dummy argon2 verify runs for unknown emails.
+  - `ACCOUNT_BLOCKED` is only revealed after a correct password.
+- **Passwords:**
+  - Argon2id (64 MiB, t=3, p=1).
+  - Length 8–128.
+  - Rejected if in the 49k common-password list (`@zxcvbn-ts/language-common`), a single repeated
+    character, or contains the email's local part.
+  - Change password revokes other sessions. Reset (15-min single-use token; only the latest is valid)
+    revokes all sessions and verifies the email.
+- **2FA (TOTP, otplib):**
+  - Setup returns an otpauth URI, a QR code and the secret; enabling returns 10 backup codes once.
+  - Replay protection via `lastUsedTimeStep`, ±30s drift.
+  - The login challenge lives in Redis for 5 minutes and allows 5 attempts.
+  - Backup codes are single-use (atomic).
+  - Disabling needs reauth and is refused for staff and admins.
+- **RBAC:** `requireRole`, `requireAdminTwoFactor` (staff and above get 403 `TWO_FACTOR_SETUP_REQUIRED` /
+  `TWO_FACTOR_REQUIRED`), `requireReauth` (5 min) and `requireVerifiedEmail` (for checkout in Phase 5).
+  `/admin/*` is protected at router level.
+- **Audit log:** register, login success/failure, lockout, blocked-user login, logout(-all), token reuse,
+  email verified, reset requested/done, password changed, reauth, 2FA enable/disable/failure, backup code
+  used, session revoked.
+- **Mailer:** Resend in production; logged (not sent) in dev without a key; captured in memory in tests.
+  HTML and text templates, with values escaped.
+- **Turnstile:** server-side siteverify, failing closed. Required in production; skipped with a warning in
+  dev and test when no key is set.
+- **Seed:** `npm run db:seed` creates the SUPER_ADMIN from `SEED_SUPER_ADMIN_*` (password ≥ 14 characters,
+  policy-checked). It's idempotent and never resets an existing password. 2FA must be set up at first login.
+- **Local services:** `docker-compose.yml` runs Postgres 17 (port 54329) and Redis 7 (port 63799).
+  `npm run db:up` / `db:down`.
+- **Tests: 83 passing** (unit + Supertest integration against Docker Postgres and Redis; `tests/global-setup.ts`
+  refuses non-local DBs). They cover:
+  - CSRF (missing, forged, bad origin)
+  - register (mass assignment, enumeration, password policy, CAPTCHA)
+  - email verification (single use)
+  - login (cookie attributes, identical errors, CAPTCHA after 3 failures, lockout after 10, unknown-email
+    lockout, blocked users)
+  - rate-limit 429
+  - refresh rotation, grace, reuse → family revoked and audited
+  - tampered and `alg: none` JWTs; blocking applies immediately
+  - logout and logout-all; session list and revoke; **IDOR** (another user's session → 404)
+  - **permission denied:** CUSTOMER → 403 on admin routes, no role escalation via `PATCH /users/me`, staff
+    without 2FA → 403
+  - 2FA setup/enable/login, replayed code, challenge exhaustion, backup codes single-use
+  - reauth; 2FA disable rules; change and reset password
+  - Mutation-checked: disabling the reuse revocation or the role check makes the tests fail.
+- **CI:** Postgres and Redis service containers added.
+- **Verified live** on Supabase + Docker Redis: register → login → `/users/me` → refresh → 403 on admin →
+  logout → 401.
+
+### Changes to Phase 0 code (additive)
+
+- `env.ts`: new auth variables, with `REDIS_URL`, `JWT_ACCESS_SECRET`, `CSRF_SECRET` and
+  `TOTP_ENCRYPTION_KEY` now **required**; Turnstile and Resend are required in production.
+- `app.ts`: global rate limit, CSRF and docs mounted.
+- `errorHandler.ts`: Prisma P2002 → 409, plus `ApiError.headers` (e.g. `Retry-After`).
+- `server.ts`: drains background jobs and closes Redis on shutdown.
+- `cookies.ts`: rewritten with the real cookie definitions.
+- `types/express.d.ts`: switched to the `declare global { namespace Express }` form, which TypeScript 6
+  (used by ESLint) didn't pick up in the old form.
+- Tests moved to `tests/unit` and `tests/integration`.
+
+### Decisions / deviations (please review)
+
+1. **Refresh-token grace window (10s).** Strict reuse detection would log users out when two tabs refresh
+   at once. Within 10s the replay only gets a new access token, with no new refresh token and no
+   revocation. After 10s the whole family is revoked.
+2. **Access tokens are checked against the DB on every request** (one indexed query). This gives instant
+   revocation and role changes. It can be cached in Redis in Phase 10 if needed.
+3. **Login lockout and failure counters live in Redis**, not on `User`, so unknown emails behave the same.
+   A Redis flush resets counters; that's acceptable.
+4. **No auto-login after registration**: it would reveal whether the email was new.
+5. **Background jobs are in-process** (`src/lib/jobs.ts`), which is enough for emails now. Move to a durable
+   queue (e.g. BullMQ on the same Redis) if email reliability matters (Phase 5+).
+6. **CSRF Origin check:** requests with neither `Origin` nor `Referer` (non-browser clients) are allowed
+   through to the token check. Browsers always send `Origin` on cross-site POSTs.
+7. **Backup codes** are 10 characters from a 31-character alphabet (about 49 bits each), stored as SHA-256
+   (they're high-entropy and single-use, so a slow hash isn't needed).
+8. **TOTP issuer** is `TOTP_ISSUER` (default "Store"); set it to the store name.
+9. Your local `.env` was given generated `JWT_ACCESS_SECRET`, `CSRF_SECRET` and `TOTP_ENCRYPTION_KEY`
+   values plus the Docker `REDIS_URL` (backup in `.env.bak`). **Production must use its own secrets.**
+10. The migration was applied to the Supabase dev DB; all 6 new tables were confirmed to have RLS plus the
+    `app_user`-only policy, with no `anon` access.
+
+### Pending
+
+- [ ] Phase 1 **frontend**: auth pages, `useMe()`, protected routes, admin 2FA UI, Turnstile widget,
+      CSRF bootstrap (`GET /auth/csrf`).
+- [ ] Production: Resend domain + `MAIL_FROM`, Turnstile keys, Redis (e.g. Upstash, `rediss://`).
+- [ ] Optional later: Google OAuth (§3).
 
 ### Scripts
 
 `dev`, `build`, `start`, `typecheck`, `lint`, `format`, `format:check`, `test`, `audit:ci`,
-`prisma:generate`, `prisma:migrate`, `prisma:deploy`.
+`prisma:generate`, `prisma:migrate`, `prisma:deploy`, `db:up`, `db:down`, `db:seed`.

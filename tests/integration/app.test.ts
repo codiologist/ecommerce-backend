@@ -1,8 +1,8 @@
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createApp } from '../src/app.js';
-import { healthRepository } from '../src/modules/health/health.repository.js';
+import { createApp } from '../../src/app.js';
+import { healthRepository } from '../../src/modules/health/health.repository.js';
 
 const app = createApp();
 

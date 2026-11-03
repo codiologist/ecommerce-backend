@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { ZodError } from 'zod';
 
 import { isProduction } from '../config/env.js';
@@ -36,6 +37,11 @@ function toApiError(err: unknown): ApiError {
     }
   }
 
+  if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+    // Unique constraint. Field names are not exposed.
+    return ApiError.conflict('Resource already exists', 'CONFLICT');
+  }
+
   // Anything else (Prisma errors, programming errors...) is never exposed to the client.
   return ApiError.internal('Internal server error', err);
 }
@@ -52,6 +58,10 @@ export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   if (res.headersSent) {
     res.end();
     return;
+  }
+
+  if (apiError.headers) {
+    for (const [name, value] of Object.entries(apiError.headers)) res.setHeader(name, value);
   }
 
   const expose = apiError.expose || !isProduction;

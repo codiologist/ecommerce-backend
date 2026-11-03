@@ -1,7 +1,9 @@
 import { createApp } from './app.js';
 import { env } from './config/env.js';
+import { drainJobs } from './lib/jobs.js';
 import { logger } from './lib/logger.js';
 import { prisma } from './lib/prisma.js';
+import { redis } from './lib/redis.js';
 
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -30,10 +32,10 @@ function shutdown(signal: string, exitCode = 0): void {
 
   server.close((err) => {
     if (err) logger.error({ err }, 'Error closing HTTP server');
-    prisma
-      .$disconnect()
-      .catch((disconnectErr: unknown) => {
-        logger.error({ err: disconnectErr }, 'Error disconnecting Prisma');
+    drainJobs()
+      .then(() => Promise.allSettled([prisma.$disconnect(), redis.quit()]))
+      .catch((closeErr: unknown) => {
+        logger.error({ err: closeErr }, 'Error during shutdown');
       })
       .finally(() => process.exit(exitCode));
   });

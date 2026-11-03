@@ -5,12 +5,18 @@ export class ApiError extends Error {
   readonly code: string;
   readonly details: ErrorDetail[] | undefined;
   readonly expose: boolean;
+  readonly headers: Record<string, string> | undefined;
 
   constructor(
     statusCode: number,
     code: string,
     message: string,
-    options: { details?: ErrorDetail[]; cause?: unknown; expose?: boolean } = {},
+    options: {
+      details?: ErrorDetail[];
+      cause?: unknown;
+      expose?: boolean;
+      headers?: Record<string, string>;
+    } = {},
   ) {
     super(message, { cause: options.cause });
     this.name = 'ApiError';
@@ -18,6 +24,7 @@ export class ApiError extends Error {
     this.code = code;
     this.details = options.details;
     this.expose = options.expose ?? statusCode < 500;
+    this.headers = options.headers;
   }
 
   static badRequest(message = 'Bad request', code = 'BAD_REQUEST', details?: ErrorDetail[]) {

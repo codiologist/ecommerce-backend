@@ -4,14 +4,18 @@ import express, { type Express } from 'express';
 import helmet from 'helmet';
 import hpp from 'hpp';
 import { pinoHttp } from 'pino-http';
+import swaggerUi from 'swagger-ui-express';
 
 import { API_PREFIX, JSON_BODY_LIMIT, REQUEST_TIMEOUT_MS } from './config/constants.js';
 import { corsOptions } from './config/cors.js';
 import { env, isProduction } from './config/env.js';
+import { buildOpenApiDocument } from './docs/openapi.js';
 import { logger } from './lib/logger.js';
+import { csrfProtection } from './middlewares/csrf.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { noStore } from './middlewares/noStore.js';
 import { notFound } from './middlewares/notFound.js';
+import { rateLimiters } from './middlewares/rateLimit.js';
 import { requestId } from './middlewares/requestId.js';
 import { requireJsonContentType } from './middlewares/requireJsonContentType.js';
 import { requestTimeout } from './middlewares/timeout.js';
@@ -44,6 +48,21 @@ export function createApp(): Express {
     }),
   );
 
+  // API docs (requirements §6): non-production only, mounted before the strict API helmet config
+  // because Swagger UI needs to render HTML.
+  if (!isProduction) {
+    const document = buildOpenApiDocument();
+    app.get('/api/docs.json', (_req, res) => {
+      res.json(document);
+    });
+    app.use(
+      '/api/docs',
+      helmet({ contentSecurityPolicy: false }),
+      swaggerUi.serve,
+      swaggerUi.setup(document),
+    );
+  }
+
   app.use(
     helmet({
       // JSON API: nothing should ever be rendered or framed.
@@ -71,6 +90,9 @@ export function createApp(): Express {
   app.use(cookieParser());
   app.use(hpp());
   app.use(noStore);
+  app.use(API_PREFIX, rateLimiters.global);
+  // Every state-changing API request needs a valid CSRF token + allowed Origin (requirements §3).
+  app.use(API_PREFIX, csrfProtection);
 
   app.use(API_PREFIX, apiRouter);
 
