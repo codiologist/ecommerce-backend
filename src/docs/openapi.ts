@@ -3,6 +3,12 @@ import { z, type ZodType } from 'zod';
 
 import { API_PREFIX } from '../config/constants.js';
 import {
+  createAttributeSchema,
+  createAttributeValueSchema,
+  updateAttributeSchema,
+  updateAttributeValueSchema,
+} from '../modules/attributes/attributes.schema.js';
+import {
   emailOnlySchema,
   enableTwoFactorSchema,
   loginSchema,
@@ -12,6 +18,27 @@ import {
   resetPasswordSchema,
   tokenSchema,
 } from '../modules/auth/auth.schema.js';
+import {
+  createBrandSchema,
+  listBrandsQuerySchema,
+  updateBrandSchema,
+} from '../modules/brands/brands.schema.js';
+import {
+  createCategorySchema,
+  reorderCategoriesSchema,
+  updateCategorySchema,
+} from '../modules/categories/categories.schema.js';
+import { stockAdjustmentSchema } from '../modules/inventory/inventory.schema.js';
+import {
+  bulkProductsSchema,
+  createProductSchema,
+  createVariantSchema,
+  listProductsQuerySchema,
+  reorderImagesSchema,
+  updateImageSchema,
+  updateProductSchema,
+  updateVariantSchema,
+} from '../modules/products/products.schema.js';
 import { changePasswordSchema, updateMeSchema } from '../modules/users/users.schema.js';
 
 /**
@@ -52,6 +79,9 @@ type PathSpec = {
   body?: ZodType;
   ok: { status: number; data?: ZodType };
   auth?: boolean;
+  query?: z.ZodObject;
+  /** multipart/form-data upload: field name, and whether several files are accepted. */
+  multipart?: { field: string; multiple: boolean };
 };
 
 const json = (schema: ZodType) => ({ content: { 'application/json': { schema } } });
@@ -72,7 +102,29 @@ function add(spec: PathSpec): void {
     tags: [spec.tag],
     summary: spec.summary,
     ...(spec.auth ? { security: [{ cookieAuth: [] }] } : {}),
-    ...(spec.body ? { request: { body: json(spec.body) } } : {}),
+    ...(spec.body || spec.query || spec.multipart
+      ? {
+          request: {
+            ...(spec.body ? { body: json(spec.body) } : {}),
+            ...(spec.query ? { query: spec.query } : {}),
+            ...(spec.multipart
+              ? {
+                  body: {
+                    content: {
+                      'multipart/form-data': {
+                        schema: z.object({
+                          [spec.multipart.field]: spec.multipart.multiple
+                            ? z.array(z.string().describe('binary image file')).max(10)
+                            : z.string().describe('binary image file'),
+                        }),
+                      },
+                    },
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
     responses,
   });
 }
@@ -285,6 +337,302 @@ add({
     data: z.object({ userId: z.uuid(), role: z.string(), twoFactorVerified: z.boolean() }),
   },
 });
+
+// ---------------------------------------------------------------------------
+// Phase 2 - Catalog (admin). Deletes need ADMIN/SUPER_ADMIN + a recent POST /auth/reauth.
+// ---------------------------------------------------------------------------
+const anyData = z.unknown();
+const catalog: PathSpec[] = [
+  {
+    method: 'get',
+    path: '/admin/categories',
+    tag: 'catalog',
+    summary: 'Category list + tree',
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'post',
+    path: '/admin/categories',
+    tag: 'catalog',
+    summary: 'Create category',
+    body: createCategorySchema,
+    ok: { status: 201, data: anyData },
+  },
+  {
+    method: 'patch',
+    path: '/admin/categories/reorder',
+    tag: 'catalog',
+    summary: 'Reorder categories',
+    body: reorderCategoriesSchema,
+    ok: { status: 204 },
+  },
+  {
+    method: 'get',
+    path: '/admin/categories/{id}',
+    tag: 'catalog',
+    summary: 'Get category',
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'patch',
+    path: '/admin/categories/{id}',
+    tag: 'catalog',
+    summary: 'Update category',
+    body: updateCategorySchema,
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'delete',
+    path: '/admin/categories/{id}',
+    tag: 'catalog',
+    summary: 'Delete category (ADMIN + reauth)',
+    ok: { status: 204 },
+  },
+  {
+    method: 'post',
+    path: '/admin/categories/{id}/image',
+    tag: 'catalog',
+    summary: 'Upload category image',
+    multipart: { field: 'image', multiple: false },
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'delete',
+    path: '/admin/categories/{id}/image',
+    tag: 'catalog',
+    summary: 'Remove category image',
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'get',
+    path: '/admin/brands',
+    tag: 'catalog',
+    summary: 'List brands (offset pagination)',
+    query: listBrandsQuerySchema,
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'post',
+    path: '/admin/brands',
+    tag: 'catalog',
+    summary: 'Create brand',
+    body: createBrandSchema,
+    ok: { status: 201, data: anyData },
+  },
+  {
+    method: 'get',
+    path: '/admin/brands/{id}',
+    tag: 'catalog',
+    summary: 'Get brand',
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'patch',
+    path: '/admin/brands/{id}',
+    tag: 'catalog',
+    summary: 'Update brand',
+    body: updateBrandSchema,
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'delete',
+    path: '/admin/brands/{id}',
+    tag: 'catalog',
+    summary: 'Delete brand (ADMIN + reauth)',
+    ok: { status: 204 },
+  },
+  {
+    method: 'post',
+    path: '/admin/brands/{id}/logo',
+    tag: 'catalog',
+    summary: 'Upload brand logo',
+    multipart: { field: 'image', multiple: false },
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'delete',
+    path: '/admin/brands/{id}/logo',
+    tag: 'catalog',
+    summary: 'Remove brand logo',
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'get',
+    path: '/admin/attributes',
+    tag: 'catalog',
+    summary: 'Attributes with values',
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'post',
+    path: '/admin/attributes',
+    tag: 'catalog',
+    summary: 'Create attribute',
+    body: createAttributeSchema,
+    ok: { status: 201, data: anyData },
+  },
+  {
+    method: 'patch',
+    path: '/admin/attributes/{id}',
+    tag: 'catalog',
+    summary: 'Update attribute',
+    body: updateAttributeSchema,
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'delete',
+    path: '/admin/attributes/{id}',
+    tag: 'catalog',
+    summary: 'Delete attribute (ADMIN + reauth)',
+    ok: { status: 204 },
+  },
+  {
+    method: 'post',
+    path: '/admin/attributes/{id}/values',
+    tag: 'catalog',
+    summary: 'Add attribute value',
+    body: createAttributeValueSchema,
+    ok: { status: 201, data: anyData },
+  },
+  {
+    method: 'patch',
+    path: '/admin/attributes/values/{valueId}',
+    tag: 'catalog',
+    summary: 'Update attribute value',
+    body: updateAttributeValueSchema,
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'delete',
+    path: '/admin/attributes/values/{valueId}',
+    tag: 'catalog',
+    summary: 'Delete attribute value (ADMIN + reauth)',
+    ok: { status: 204 },
+  },
+  {
+    method: 'get',
+    path: '/admin/products',
+    tag: 'catalog',
+    summary: 'List products (filters, search, offset pagination)',
+    query: listProductsQuerySchema,
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'post',
+    path: '/admin/products',
+    tag: 'catalog',
+    summary: 'Create product with variants',
+    body: createProductSchema,
+    ok: { status: 201, data: anyData },
+  },
+  {
+    method: 'post',
+    path: '/admin/products/bulk',
+    tag: 'catalog',
+    summary: 'Bulk publish/draft/archive/delete',
+    body: bulkProductsSchema,
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'get',
+    path: '/admin/products/{id}',
+    tag: 'catalog',
+    summary: 'Product detail',
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'patch',
+    path: '/admin/products/{id}',
+    tag: 'catalog',
+    summary: 'Update product fields',
+    body: updateProductSchema,
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'delete',
+    path: '/admin/products/{id}',
+    tag: 'catalog',
+    summary: 'Delete product (ADMIN + reauth)',
+    ok: { status: 204 },
+  },
+  {
+    method: 'post',
+    path: '/admin/products/{id}/variants',
+    tag: 'catalog',
+    summary: 'Add variant',
+    body: createVariantSchema,
+    ok: { status: 201, data: anyData },
+  },
+  {
+    method: 'patch',
+    path: '/admin/variants/{variantId}',
+    tag: 'catalog',
+    summary: 'Update variant (not stock)',
+    body: updateVariantSchema,
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'delete',
+    path: '/admin/variants/{variantId}',
+    tag: 'catalog',
+    summary: 'Delete variant (ADMIN + reauth)',
+    ok: { status: 204 },
+  },
+  {
+    method: 'post',
+    path: '/admin/products/{id}/images',
+    tag: 'catalog',
+    summary: 'Upload product images (max 10 per request, 20 per product)',
+    multipart: { field: 'images', multiple: true },
+    ok: { status: 201, data: anyData },
+  },
+  {
+    method: 'patch',
+    path: '/admin/products/{id}/images/order',
+    tag: 'catalog',
+    summary: 'Reorder product images',
+    body: reorderImagesSchema,
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'patch',
+    path: '/admin/images/{imageId}',
+    tag: 'catalog',
+    summary: 'Update image alt / variant',
+    body: updateImageSchema,
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'delete',
+    path: '/admin/images/{imageId}',
+    tag: 'catalog',
+    summary: 'Delete image',
+    ok: { status: 204 },
+  },
+  {
+    method: 'post',
+    path: '/admin/variants/{variantId}/stock-adjustments',
+    tag: 'inventory',
+    summary: 'Adjust stock (atomic, never negative)',
+    body: stockAdjustmentSchema,
+    ok: { status: 201, data: anyData },
+  },
+  {
+    method: 'get',
+    path: '/admin/variants/{variantId}/movements',
+    tag: 'inventory',
+    summary: 'Stock movement history',
+    ok: { status: 200, data: anyData },
+  },
+  {
+    method: 'get',
+    path: '/admin/inventory/low-stock',
+    tag: 'inventory',
+    summary: 'Variants at or below their threshold',
+    ok: { status: 200, data: anyData },
+  },
+];
+for (const spec of catalog) add({ ...spec, auth: true });
 
 export function buildOpenApiDocument() {
   return new OpenApiGeneratorV31(registry.definitions).generateDocument({

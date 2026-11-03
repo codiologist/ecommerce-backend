@@ -4,7 +4,7 @@ import { ApiError } from '../utils/ApiError.js';
 import type { Role } from '@prisma/client';
 import type { RequestHandler } from 'express';
 
-const REAUTH_MAX_AGE_MS = 5 * 60 * 1000;
+export const REAUTH_MAX_AGE_MS = 5 * 60 * 1000;
 
 /** Allows only the given roles. Must run after `authenticate` (requirements §3: backend checks every route). */
 export const requireRole =

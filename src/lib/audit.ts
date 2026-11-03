@@ -23,7 +23,15 @@ export type AuditAction =
   | 'auth.2fa_disabled'
   | 'auth.2fa_failed'
   | 'auth.backup_code_used'
-  | 'auth.session_revoked';
+  | 'auth.session_revoked'
+  | `catalog.${CatalogEntity}.${'create' | 'update' | 'delete'}`
+  | 'catalog.product.bulk'
+  | 'catalog.category.reorder'
+  | 'catalog.image.reorder'
+  | 'inventory.adjust';
+
+type CatalogEntity =
+  'category' | 'brand' | 'attribute' | 'attribute_value' | 'product' | 'variant' | 'image';
 
 export type AuditEntry = {
   action: AuditAction;

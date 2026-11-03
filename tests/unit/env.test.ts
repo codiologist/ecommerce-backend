@@ -21,6 +21,9 @@ const prodExtras = {
   CORS_ORIGINS: 'https://example.com',
   TURNSTILE_SECRET_KEY: 'x',
   SMTP_HOST: 'smtp.example.com',
+  CLOUDINARY_CLOUD_NAME: 'demo',
+  CLOUDINARY_API_KEY: '123',
+  CLOUDINARY_API_SECRET: 'secret',
   MAIL_FROM: 'Store <no-reply@example.com>',
 };
 
@@ -65,6 +68,9 @@ describe('parseEnv', () => {
       /TURNSTILE/,
     );
     expect(() => parseEnv({ ...valid, ...prodExtras, SMTP_HOST: '' })).toThrow(/SMTP_HOST/);
+    expect(() => parseEnv({ ...valid, ...prodExtras, CLOUDINARY_API_SECRET: '' })).toThrow(
+      /CLOUDINARY/,
+    );
     expect(() => parseEnv({ ...valid, ...prodExtras, SMTP_USER: 'u' })).toThrow(/SMTP_USER/);
     expect(() => parseEnv({ ...valid, ...prodExtras })).not.toThrow();
   });

@@ -4,6 +4,11 @@ import { Router } from 'express';
 import { authenticate, requireAuthContext } from '../../middlewares/authenticate.js';
 import { requireAdminTwoFactor, requireRole } from '../../middlewares/rbac.js';
 import { sendSuccess } from '../../utils/response.js';
+import { attributesRouter } from '../attributes/attributes.routes.js';
+import { brandsRouter } from '../brands/brands.routes.js';
+import { categoriesRouter } from '../categories/categories.routes.js';
+import { inventoryRouter } from '../inventory/inventory.routes.js';
+import { productPartsRouter, productsRouter } from '../products/products.routes.js';
 
 /**
  * All /api/v1/admin/* routes: authenticated, staff-or-above, 2FA enabled and verified
@@ -26,3 +31,11 @@ adminRouter.get('/session', (req, res) => {
     twoFactorVerified: auth.twoFactorVerified,
   });
 });
+
+// Phase 2 - Catalog (Admin)
+adminRouter.use('/categories', categoriesRouter);
+adminRouter.use('/brands', brandsRouter);
+adminRouter.use('/attributes', attributesRouter);
+adminRouter.use('/products', productsRouter);
+adminRouter.use(productPartsRouter);
+adminRouter.use(inventoryRouter);

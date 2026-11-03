@@ -7,6 +7,18 @@ import { redis } from '../../src/lib/redis.js';
 export async function resetState(): Promise<void> {
   await drainJobs();
   await prisma.$transaction([
+    // Phase 2 catalog (children first)
+    prisma.inventoryMovement.deleteMany(),
+    prisma.productImage.deleteMany(),
+    prisma.variantAttributeValue.deleteMany(),
+    prisma.productVariant.deleteMany(),
+    prisma.product.deleteMany(),
+    prisma.attributeValue.deleteMany(),
+    prisma.attribute.deleteMany(),
+    prisma.brand.deleteMany(),
+    prisma.category.updateMany({ data: { parentId: null } }),
+    prisma.category.deleteMany(),
+    // Phase 1
     prisma.auditLog.deleteMany(),
     prisma.session.deleteMany(),
     prisma.emailVerificationToken.deleteMany(),

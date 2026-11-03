@@ -72,7 +72,15 @@ export const envSchema = z.object({
   SMTP_PASS: optionalString,
   /** e.g. "Store <no-reply@example.com>" */
   MAIL_FROM: optionalString,
-  STORAGE_BUCKET: optionalString,
+  // Image storage: Cloudinary (§4.2: object storage, never the API server's disk). Required in production.
+  CLOUDINARY_CLOUD_NAME: optionalString,
+  CLOUDINARY_API_KEY: optionalString,
+  CLOUDINARY_API_SECRET: optionalString,
+  /** Folder prefix for uploads, e.g. "catalog" (prod) / "catalog-dev" (dev). */
+  CLOUDINARY_FOLDER: z
+    .string()
+    .regex(/^[a-z0-9_-]+(\/[a-z0-9_-]+)*$/)
+    .default('catalog-dev'),
   PAYMENT_PROVIDER: optionalString,
   SEED_SUPER_ADMIN_EMAIL: optionalString,
   SEED_SUPER_ADMIN_PASSWORD: optionalString,
@@ -98,6 +106,9 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
     if (!env.TURNSTILE_SECRET_KEY) problems.push('TURNSTILE_SECRET_KEY: required in production');
     if (!env.SMTP_HOST) problems.push('SMTP_HOST: required in production');
     if (!env.MAIL_FROM) problems.push('MAIL_FROM: required in production');
+    if (!env.CLOUDINARY_CLOUD_NAME || !env.CLOUDINARY_API_KEY || !env.CLOUDINARY_API_SECRET) {
+      problems.push('CLOUDINARY_CLOUD_NAME / _API_KEY / _API_SECRET: required in production');
+    }
     if (Boolean(env.SMTP_USER) !== Boolean(env.SMTP_PASS)) {
       problems.push('SMTP_USER / SMTP_PASS: set both or neither');
     }

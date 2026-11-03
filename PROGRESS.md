@@ -1,10 +1,11 @@
 # ecommerce-backend — Progress
 
-| Phase                     | Status                                       |
-| ------------------------- | -------------------------------------------- |
-| 0. Setup (backend)        | ✅ Done (2026-11-03)                         |
-| 1. Auth & Users (backend) | ✅ Done (2026-11-03) — frontend part pending |
-| 2–10                      | ⏳ Not started                               |
+| Phase                        | Status                                       |
+| ---------------------------- | -------------------------------------------- |
+| 0. Setup (backend)           | ✅ Done (2026-11-03)                         |
+| 1. Auth & Users (backend)    | ✅ Done (2026-11-03) — frontend done too     |
+| 2. Catalog (Admin) (backend) | ✅ Done (2026-11-04) — frontend part pending |
+| 3–10                         | ⏳ Not started                               |
 
 ---
 
@@ -256,3 +257,123 @@ Replaced **Resend** with **Nodemailer** (SMTP), as requested; both are allowed b
 - Verified end to end on the running dev servers: register in the browser → email in Mailpit → click the
   link → "Verify my email" → the account shows **Verified**.
 - `resend` was uninstalled. Nodemailer ships its own types, so there's no `@types/nodemailer`.
+
+---
+
+## Phase 2 — Catalog, Admin (backend)
+
+### Built
+
+- **Models** (migration `20261103195543_phase2_catalog`; applied to Supabase, and all 9 tables got RLS
+  plus the `app_user`-only policy automatically):
+  - `Category`: self-relation tree, soft delete
+  - `Brand`: soft delete
+  - `Attribute` (SELECT / COLOR) and `AttributeValue`
+  - `Product`: status DRAFT / ACTIVE / ARCHIVED, sanitized HTML description, JSON specifications, SEO
+    fields, `isFeatured`, `publishedAt`, soft delete
+  - `ProductVariant`: unique SKU; `price` / `compareAtPrice` in **integer minor units**; stock,
+    low-stock threshold, weight, default/active flags
+  - `VariantAttributeValue`: unique (variant, attribute), i.e. at most one value per attribute
+  - `ProductImage`
+  - `InventoryMovement`: reasons RESTOCK / ADJUSTMENT / DAMAGE / CORRECTION, with SALE / RETURN reserved
+    for orders
+  - Indexes on slugs, SKUs, FKs, status, featured, `createdAt` / `publishedAt` and `deletedAt`, plus
+    (variant, `createdAt`) for stock history.
+- **Endpoints** (`/api/v1/admin`: login + STAFF or above + 2FA; **deletes need ADMIN / SUPER_ADMIN plus
+  a re-auth within 5 minutes**):
+  - Categories: list + tree, CRUD, reorder, image upload/remove
+  - Brands: offset-paginated list with search, CRUD, logo upload/remove
+  - Attributes and values: CRUD
+  - Products: list (filters status / category / brand / featured / low stock; search name or SKU; sort;
+    offset pagination with `totalPages`), create **with variants + initial stock in one transaction**,
+    get, update (product fields only), soft delete, bulk publish / draft / archive / delete
+    (delete re-checked inside: ADMIN + reauth)
+  - Variants: add, update (stock **not** editable here), soft delete
+  - Images: multipart upload (≤10 per request, ≤20 per product), reorder, update alt / variant link,
+    delete
+  - Inventory: stock adjustment, movement history, low-stock list
+  - All of the above in OpenAPI at `/api/docs`.
+- **Rules:**
+  - Slugs are generated and unique (`-2`, `-3`…); non-Latin names (e.g. Bangla) get `item-xxxxxxxx`.
+    An explicit slug that's taken → 409 `SLUG_TAKEN`.
+  - No category cycles (`CATEGORY_CYCLE`). A category or brand can't be deleted while it still has
+    products or subcategories.
+  - SKUs are uppercased and unique (409 `SKU_TAKEN`). Variants of one product must **differ by their
+    options**; one value per attribute.
+  - `compareAtPrice` must be higher than `price`; money is whole integers.
+  - A product can be published only with ≥1 active variant (`PRODUCT_NOT_SELLABLE`); the last active
+    variant of a published product can't be deactivated or deleted (`LAST_ACTIVE_VARIANT`).
+  - There's always exactly one default variant, reassigned when the default is deleted.
+  - Soft delete renames slugs and SKUs (`…--deleted-xxxxxxxx`) so they can be reused, and keeps the rows
+    for future order history.
+- **Stock:** one conditional `UPDATE … stock + delta >= 0` in a transaction, so it's **race-safe**: a test
+  fires 8 concurrent −3 removals on stock 10 and exactly 3 succeed, and the movement history always sums
+  to the stock. Every change writes an `InventoryMovement` row and an audit entry.
+- **Uploads (§4.2):**
+  - Admin only; multer memory storage, never written to disk.
+  - MIME allowlist jpeg / png / webp / avif, **magic-byte check** (`file-type`), 5 MB per file, 8000×8000
+    px input limit.
+  - **Re-encoded by sharp** to WebP, max width 2000 px, **EXIF/GPS stripped**.
+  - Random names (`products/<productId>/<uuid>`); the client filename is never used.
+  - Every file is validated before anything is stored, and partial uploads are rolled back.
+  - Old files are deleted on replace or delete.
+  - Multipart is accepted **only** on the three upload routes; everything else is JSON-only (415).
+- **Rich text (§4.3):** `sanitize-html` allowlist on write (no script/style/iframe/event handlers/
+  `javascript:`/data URLs; links forced to `rel="noopener noreferrer nofollow"`).
+- **Storage:** `StorageDriver` interface with a **Cloudinary** driver (`cloudinary` 2.11.0, upload_stream
+  into `CLOUDINARY_FOLDER/<folder>`, `secure` URLs) and an in-memory driver for tests. Without Cloudinary
+  credentials (dev only) uploads return 503 `STORAGE_NOT_CONFIGURED`; production refuses to start
+  without them.
+- **Audit log:** create / update / delete for every catalog entity, reorders, bulk actions and stock
+  adjustments.
+- **Tests: 122 passing** (37 new catalog tests). They cover:
+  - CUSTOMER → 403 on every admin catalog route; anonymous → 401
+  - **STAFF can create but not delete**; **ADMIN needs reauth to delete**; staff can't bulk-delete
+  - tree, slug generation, Bangla fallback, cycle rejection, delete guards, slug reuse after delete
+  - brand search and pagination meta; max page size → 422
+  - COLOR values need a hex colour; values in use can't be deleted
+  - product + variants + options + initial-stock movements; **XSS stripped from descriptions**
+  - duplicate SKU → 409; duplicate option combinations; two sizes on one variant; float price;
+    compare-at below price
+  - **mass assignment** (`stock`, `id` in `PATCH /products/:id` ignored)
+  - publish rules, last active variant, default reassignment, SKU reuse
+  - list filters, search by SKU, low-stock, computed price range / total stock
+  - stock adjust, insufficient stock, SALE rejected for manual adjustments, history, **concurrency**
+  - uploads: EXIF stripped, WebP, resize to 2000 px, random keys (`../../etc/passwd.jpg` ignored),
+    **fake PNG containing PHP rejected**, nothing stored when one file is bad, SVG rejected, >5 MB →
+    413, multipart refused on non-upload routes, logo replacement deletes the old file, customer can't
+    upload
+  - Mutation-checked: removing the stock condition or the sanitizer makes the tests fail.
+
+### Changes to earlier phases' code (additive)
+
+- `requireJsonContentType` (Phase 0): explicit multipart allowlist for the 3 upload routes.
+- `env.ts`: `CLOUDINARY_*` settings (required in production); the unused `STORAGE_BUCKET` was removed.
+- `rbac.ts`: exports `REAUTH_MAX_AGE_MS` (used by bulk delete).
+- `audit.ts`: catalog / inventory action names.
+- `admin.routes.ts`: mounts the catalog routers.
+- `response.ts`: `totalPages` in pagination meta.
+- Test helpers: catalog tables in `resetState`, `TestClient.upload()`, `adminClient()` (2FA-verified
+  admin + one-time reauth).
+
+### Decisions / deviations (please review)
+
+1. **Storage = Cloudinary**, as you chose. We still re-encode with sharp ourselves before uploading, so
+   EXIF stripping and size limits don't depend on Cloudinary settings.
+2. **CSV import/export moved to Phase 8** (reports / CSV), as recommended, since you didn't pick otherwise.
+3. **Stock is only changed through stock adjustments** (and initial stock on create), never by editing a
+   variant, so the history always explains the current stock.
+4. **Soft deletes everywhere in the catalog**, with slug/SKU renaming. Images of soft-deleted products are
+   kept in storage for now; a cleanup job can come in Phase 10.
+5. Admin search is a simple case-insensitive `contains` on name/SKU. Full-text + trigram search for the
+   storefront is Phase 3.
+6. Currency formatting isn't stored per product; all money is minor units (BDT poisha by default). Store
+   currency comes with settings in Phase 9.
+
+### Pending
+
+- [ ] **Add your Cloudinary credentials** to `ecommerce-backend/.env` (`CLOUDINARY_CLOUD_NAME`,
+      `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`); until then uploads return 503 in dev.
+- [ ] Phase 2 **frontend**: admin sidebar layout, data tables and forms for categories, brands, attributes,
+      products and variants, image upload/reorder, stock adjustment and history.
+- [ ] Phase 8: product CSV import/export.

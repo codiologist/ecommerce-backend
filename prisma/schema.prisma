@@ -51,6 +51,7 @@ model User {
   passwordResetTokens     PasswordResetToken[]
   twoFactorSecret         TwoFactorSecret?
   auditLogs               AuditLog[]
+  inventoryMovements      InventoryMovement[]
 
   @@index([role])
   @@index([status])
@@ -151,4 +152,225 @@ model AuditLog {
   @@index([actorId])
   @@index([action])
   @@index([createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — Catalog
+// Money is stored as integer minor units (e.g. poisha for BDT) - never floats (§6).
+// ---------------------------------------------------------------------------
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum AttributeType {
+  SELECT
+  COLOR
+}
+
+enum InventoryReason {
+  RESTOCK
+  ADJUSTMENT
+  DAMAGE
+  CORRECTION
+  /// Set by order flows (Phase 5+)
+  SALE
+  RETURN
+}
+
+model Category {
+  id             String    @id @default(uuid()) @db.Uuid
+  parentId       String?   @db.Uuid
+  name           String    @db.VarChar(120)
+  slug           String    @unique @db.VarChar(140)
+  description    String?   @db.VarChar(2000)
+  imageUrl       String?   @db.VarChar(1024)
+  imageKey       String?   @db.VarChar(255)
+  sortOrder      Int       @default(0)
+  isActive       Boolean   @default(true)
+  seoTitle       String?   @db.VarChar(70)
+  seoDescription String?   @db.VarChar(160)
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children Category[] @relation("CategoryTree")
+  products Product[]
+
+  @@index([parentId, sortOrder])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@index([createdAt])
+}
+
+model Brand {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String    @db.VarChar(120)
+  slug        String    @unique @db.VarChar(140)
+  description String?   @db.VarChar(2000)
+  logoUrl     String?   @db.VarChar(1024)
+  logoKey     String?   @db.VarChar(255)
+  sortOrder   Int       @default(0)
+  isActive    Boolean   @default(true)
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  products Product[]
+
+  @@index([sortOrder])
+  @@index([isActive])
+  @@index([deletedAt])
+  @@index([createdAt])
+}
+
+model Attribute {
+  id        String        @id @default(uuid()) @db.Uuid
+  name      String        @db.VarChar(60)
+  slug      String        @unique @db.VarChar(80)
+  type      AttributeType @default(SELECT)
+  sortOrder Int           @default(0)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  values AttributeValue[]
+
+  @@index([sortOrder])
+}
+
+model AttributeValue {
+  id          String   @id @default(uuid()) @db.Uuid
+  attributeId String   @db.Uuid
+  value       String   @db.VarChar(60)
+  slug        String   @db.VarChar(80)
+  /// For COLOR attributes, e.g. "#1a2b3c"
+  colorHex    String?  @db.VarChar(7)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  attribute Attribute               @relation(fields: [attributeId], references: [id], onDelete: Cascade)
+  variants  VariantAttributeValue[]
+
+  @@unique([attributeId, slug])
+  @@index([attributeId, sortOrder])
+}
+
+model Product {
+  id               String        @id @default(uuid()) @db.Uuid
+  name             String        @db.VarChar(200)
+  slug             String        @unique @db.VarChar(220)
+  /// Sanitized HTML (sanitize-html on write). Safe to render.
+  description      String?
+  shortDescription String?       @db.VarChar(500)
+  status           ProductStatus @default(DRAFT)
+  categoryId       String?       @db.Uuid
+  brandId          String?       @db.Uuid
+  /// [{ "name": "Material", "value": "Cotton" }, ...]
+  specifications   Json          @default("[]")
+  seoTitle         String?       @db.VarChar(70)
+  seoDescription   String?       @db.VarChar(160)
+  isFeatured       Boolean       @default(false)
+  publishedAt      DateTime?
+  deletedAt        DateTime?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  category Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  brand    Brand?           @relation(fields: [brandId], references: [id], onDelete: SetNull)
+  variants ProductVariant[]
+  images   ProductImage[]
+
+  @@index([status, deletedAt])
+  @@index([categoryId])
+  @@index([brandId])
+  @@index([isFeatured])
+  @@index([createdAt])
+  @@index([publishedAt])
+}
+
+model ProductVariant {
+  id                String    @id @default(uuid()) @db.Uuid
+  productId         String    @db.Uuid
+  sku               String    @unique @db.VarChar(64)
+  /// Minor units (e.g. 125000 = ৳1,250.00)
+  price             Int
+  compareAtPrice    Int?
+  stock             Int       @default(0)
+  lowStockThreshold Int       @default(5)
+  weightGrams       Int?
+  isDefault         Boolean   @default(false)
+  isActive          Boolean   @default(true)
+  sortOrder         Int       @default(0)
+  deletedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  product         Product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
+  attributeValues VariantAttributeValue[]
+  images          ProductImage[]
+  movements       InventoryMovement[]
+
+  @@index([productId, sortOrder])
+  @@index([stock])
+  @@index([deletedAt])
+}
+
+model VariantAttributeValue {
+  variantId        String   @db.Uuid
+  attributeValueId String   @db.Uuid
+  /// Denormalised so "one value per attribute per variant" can be a unique constraint.
+  attributeId      String   @db.Uuid
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  variant        ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  attributeValue AttributeValue @relation(fields: [attributeValueId], references: [id], onDelete: Restrict)
+
+  @@id([variantId, attributeValueId])
+  @@unique([variantId, attributeId])
+  @@index([attributeValueId])
+}
+
+model ProductImage {
+  id         String   @id @default(uuid()) @db.Uuid
+  productId  String   @db.Uuid
+  variantId  String?  @db.Uuid
+  /// Storage provider key (Cloudinary public_id)
+  storageKey String   @db.VarChar(255)
+  url        String   @db.VarChar(1024)
+  alt        String?  @db.VarChar(200)
+  width      Int
+  height     Int
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  product Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variant ProductVariant? @relation(fields: [variantId], references: [id], onDelete: SetNull)
+
+  @@index([productId, sortOrder])
+  @@index([variantId])
+}
+
+model InventoryMovement {
+  id         String          @id @default(uuid()) @db.Uuid
+  variantId  String          @db.Uuid
+  delta      Int
+  stockAfter Int
+  reason     InventoryReason
+  note       String?         @db.VarChar(500)
+  actorId    String?         @db.Uuid
+  createdAt  DateTime        @default(now())
+  updatedAt  DateTime        @updatedAt
+
+  variant ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  actor   User?          @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([variantId, createdAt])
+  @@index([actorId])
+  @@index([reason])
 }

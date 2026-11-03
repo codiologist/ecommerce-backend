@@ -66,6 +66,17 @@ export class TestClient {
       await this.agent.patch(`${API}${path}`).set('X-CSRF-Token', this.csrf).send(body),
     );
   }
+  /** multipart/form-data upload (files as { buffer, filename, contentType }). */
+  async upload(
+    path: string,
+    field: string,
+    files: { buffer: Buffer; filename: string; contentType: string }[],
+  ): Promise<Response> {
+    let req = this.agent.post(`${API}${path}`).set('X-CSRF-Token', this.csrf);
+    for (const f of files)
+      req = req.attach(field, f.buffer, { filename: f.filename, contentType: f.contentType });
+    return this.track(await req);
+  }
   async delete(path: string): Promise<Response> {
     return this.track(await this.agent.delete(`${API}${path}`).set('X-CSRF-Token', this.csrf));
   }
@@ -116,3 +127,31 @@ export async function createUserWithTwoFactor(role: Role = Role.ADMIN) {
 /** Code for the NEXT/PREVIOUS time step, so tests can log in twice without hitting replay protection. */
 export const totpCode = (secret: string, offsetSteps = 0): Promise<string> =>
   generate({ secret, epoch: Math.floor(Date.now() / 1000) + offsetSteps * 30 });
+
+/**
+ * A logged-in staff/admin client that has passed 2FA (what every /admin route requires).
+ * `reauth()` performs POST /auth/reauth with a fresh TOTP step (needed for deletes).
+ */
+export async function adminClient(role: Role = Role.ADMIN) {
+  const { user, secret } = await createUserWithTwoFactor(role);
+  const client = await TestClient.create();
+  const first = await client.login(user.email);
+  const challengeId = (first.body as { data: { challengeId: string } }).data.challengeId;
+  const done = await client.post('/auth/login/2fa', {
+    challengeId,
+    code: await totpCode(secret, -1),
+  });
+  if (done.status !== 200) throw new Error(`admin login failed: ${done.status}`);
+  // Re-auth lasts 5 minutes, and TOTP replay protection allows one fresh step per test: do it once.
+  let reauthed = false;
+  const reauth = async () => {
+    if (reauthed) return;
+    const res = await client.post('/auth/reauth', {
+      password: STRONG_PASSWORD,
+      code: await totpCode(secret, 1),
+    });
+    if (res.status !== 204) throw new Error(`reauth failed: ${res.status}`);
+    reauthed = true;
+  };
+  return { client, user, reauth };
+}
