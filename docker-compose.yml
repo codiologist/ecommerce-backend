@@ -30,5 +30,15 @@ services:
       timeout: 3s
       retries: 30
 
+  # Local SMTP server + web inbox for development emails (never used in production).
+  # SMTP: 127.0.0.1:1025 (no auth, no TLS)  ·  Inbox UI: http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:v1.33.0
+    ports:
+      - '127.0.0.1:1025:1025'
+      - '127.0.0.1:8025:8025'
+    environment:
+      MP_MAX_MESSAGES: 500
+
 volumes:
   pgdata:

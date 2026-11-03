@@ -23,6 +23,9 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U ecommerce -d ecommerce_test"
           --health-interval 2s --health-timeout 3s --health-retries 30
+      mailpit:
+        image: axllent/mailpit:v1.33.0
+        ports: ['1025:1025', '8025:8025']
       redis:
         image: redis:7-alpine
         ports: ['63799:6379']

@@ -60,8 +60,18 @@ export const envSchema = z.object({
     .regex(/^[0-9a-fA-F]{64}$/, 'must be 32 bytes as 64 hex characters'),
   TOTP_ISSUER: z.string().min(1).default('Store'),
   TURNSTILE_SECRET_KEY: optionalString,
+  // Email via SMTP (Nodemailer). Without SMTP_HOST (dev only) emails are logged instead of sent.
+  SMTP_HOST: optionalString,
+  SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+  /** true = implicit TLS (usually port 465); false = STARTTLS upgrade (587) or plain (local Mailpit). */
+  SMTP_SECURE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+  SMTP_USER: optionalString,
+  SMTP_PASS: optionalString,
+  /** e.g. "Store <no-reply@example.com>" */
   MAIL_FROM: optionalString,
-  RESEND_API_KEY: optionalString,
   STORAGE_BUCKET: optionalString,
   PAYMENT_PROVIDER: optionalString,
   SEED_SUPER_ADMIN_EMAIL: optionalString,
@@ -86,8 +96,11 @@ export function parseEnv(source: Record<string, string | undefined>): Env {
       problems.push('CORS_ORIGINS: must be https in production');
     }
     if (!env.TURNSTILE_SECRET_KEY) problems.push('TURNSTILE_SECRET_KEY: required in production');
-    if (!env.RESEND_API_KEY) problems.push('RESEND_API_KEY: required in production');
+    if (!env.SMTP_HOST) problems.push('SMTP_HOST: required in production');
     if (!env.MAIL_FROM) problems.push('MAIL_FROM: required in production');
+    if (Boolean(env.SMTP_USER) !== Boolean(env.SMTP_PASS)) {
+      problems.push('SMTP_USER / SMTP_PASS: set both or neither');
+    }
     if (problems.length > 0) {
       throw new Error(
         `Invalid environment configuration:\n${problems.map((p) => `  - ${p}`).join('\n')}`,

@@ -156,8 +156,8 @@
 - **Audit log:** register, login success/failure, lockout, blocked-user login, logout(-all), token reuse,
   email verified, reset requested/done, password changed, reauth, 2FA enable/disable/failure, backup code
   used, session revoked.
-- **Mailer:** Resend in production; logged (not sent) in dev without a key; captured in memory in tests.
-  HTML and text templates, with values escaped.
+- **Mailer:** Nodemailer over SMTP (see "Email: Nodemailer + Mailpit" below); captured in memory in unit
+  and integration tests. HTML and text templates, with values escaped.
 - **Turnstile:** server-side siteverify, failing closed. Required in production; skipped with a warning in
   dev and test when no key is set.
 - **Seed:** `npm run db:seed` creates the SUPER_ADMIN from `SEED_SUPER_ADMIN_*` (password ≥ 14 characters,
@@ -187,7 +187,8 @@
 ### Changes to Phase 0 code (additive)
 
 - `env.ts`: new auth variables, with `REDIS_URL`, `JWT_ACCESS_SECRET`, `CSRF_SECRET` and
-  `TOTP_ENCRYPTION_KEY` now **required**; Turnstile and Resend are required in production.
+  `TOTP_ENCRYPTION_KEY` now **required**; Turnstile and SMTP (`SMTP_HOST`, `MAIL_FROM`) are required in
+  production.
 - `app.ts`: global rate limit, CSRF and docs mounted.
 - `errorHandler.ts`: Prisma P2002 → 409, plus `ApiError.headers` (e.g. `Retry-After`).
 - `server.ts`: drains background jobs and closes Redis on shutdown.
@@ -222,10 +223,36 @@
 
 - [ ] Phase 1 **frontend**: auth pages, `useMe()`, protected routes, admin 2FA UI, Turnstile widget,
       CSRF bootstrap (`GET /auth/csrf`).
-- [ ] Production: Resend domain + `MAIL_FROM`, Turnstile keys, Redis (e.g. Upstash, `rediss://`).
+- [ ] Production: SMTP provider credentials + a verified sender domain for `MAIL_FROM` (SPF/DKIM),
+      Turnstile keys, Redis (e.g. Upstash, `rediss://`).
 - [ ] Optional later: Google OAuth (§3).
 
 ### Scripts
 
 `dev`, `build`, `start`, `typecheck`, `lint`, `format`, `format:check`, `test`, `audit:ci`,
 `prisma:generate`, `prisma:migrate`, `prisma:deploy`, `db:up`, `db:down`, `db:seed`.
+
+---
+
+## Email: Nodemailer + Mailpit (2026-11-04, change requested after Phase 1)
+
+Replaced **Resend** with **Nodemailer** (SMTP), as requested; both are allowed by §1.
+
+- `src/lib/mailer.ts`: `createSmtpTransport()` uses Nodemailer 10.3.1. It pools connections (3) and has
+  bounded connect/greeting/socket timeouts and TLS ≥ 1.2. **In production `requireTLS` is on**, so a
+  server that can't upgrade to TLS is refused, unless `SMTP_SECURE=true` (implicit TLS, port 465).
+  - With no `SMTP_HOST` (dev only), each email is logged as **one line with the link(s)** instead of
+    being sent.
+- `env.ts`: `RESEND_API_KEY` was removed. Added `SMTP_HOST`, `SMTP_PORT` (default 587), `SMTP_SECURE`,
+  `SMTP_USER`, `SMTP_PASS` (both or neither) and `MAIL_FROM`. Production requires `SMTP_HOST` and
+  `MAIL_FROM`.
+- `docker-compose.yml`: **Mailpit v1.33.0**, a local SMTP server (127.0.0.1:1025) with a web inbox at
+  **http://localhost:8025**. Development emails arrive there; nothing leaves the machine.
+- Your local `.env` now points at Mailpit (`SMTP_HOST=127.0.0.1`, `SMTP_PORT=1025`); backup in
+  `.env.bak2`.
+- Tests: `tests/integration/mailer.test.ts` sends through the real SMTP transport into Mailpit and reads
+  the message back (link, HTML escaping, sender). It also checks that `requireTLS` refuses a non-TLS
+  server. Mailpit was added as a CI service. **85 tests passing.**
+- Verified end to end on the running dev servers: register in the browser → email in Mailpit → click the
+  link → "Verify my email" → the account shows **Verified**.
+- `resend` was uninstalled. Nodemailer ships its own types, so there's no `@types/nodemailer`.

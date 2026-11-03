@@ -20,7 +20,7 @@ const prodExtras = {
   NODE_ENV: 'production',
   CORS_ORIGINS: 'https://example.com',
   TURNSTILE_SECRET_KEY: 'x',
-  RESEND_API_KEY: 're_x',
+  SMTP_HOST: 'smtp.example.com',
   MAIL_FROM: 'Store <no-reply@example.com>',
 };
 
@@ -64,7 +64,8 @@ describe('parseEnv', () => {
     expect(() => parseEnv({ ...valid, ...prodExtras, TURNSTILE_SECRET_KEY: '' })).toThrow(
       /TURNSTILE/,
     );
-    expect(() => parseEnv({ ...valid, ...prodExtras, RESEND_API_KEY: '' })).toThrow(/RESEND/);
+    expect(() => parseEnv({ ...valid, ...prodExtras, SMTP_HOST: '' })).toThrow(/SMTP_HOST/);
+    expect(() => parseEnv({ ...valid, ...prodExtras, SMTP_USER: 'u' })).toThrow(/SMTP_USER/);
     expect(() => parseEnv({ ...valid, ...prodExtras })).not.toThrow();
   });
 
