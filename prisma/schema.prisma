@@ -1,0 +1,15 @@
+// Prisma ORM 6.x (pinned). Do not upgrade to 7/8 without approval (requirements §1).
+// All tables live in the `app` Postgres schema, which is NOT exposed by Supabase's Data API.
+// The schema is selected with `?schema=app` on DATABASE_URL and DIRECT_URL (see .env.example).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// Models are added per phase. Phase 1 adds User, Session, etc.

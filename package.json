@@ -1,0 +1,75 @@
+{
+  "name": "ecommerce-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "E-commerce REST API (Express 5 + Prisma 6 + Supabase Postgres)",
+  "type": "module",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "dev": "tsx watch --env-file-if-exists=.env src/server.ts",
+    "build": "prisma generate && node node_modules/typescript7/bin/tsc -p tsconfig.build.json",
+    "start": "node dist/server.js",
+    "typecheck": "node node_modules/typescript7/bin/tsc -p tsconfig.json --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "postinstall": "prisma generate",
+    "prepare": "husky",
+    "audit:ci": "npm audit --audit-level=high"
+  },
+  "lint-staged": {
+    "*.ts": [
+      "eslint --max-warnings=0 --fix",
+      "prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3",
+    "cookie-parser": "1.4.7",
+    "cors": "2.8.6",
+    "express": "5.3.0",
+    "helmet": "8.3.0",
+    "hpp": "0.2.3",
+    "pino": "10.4.0",
+    "pino-http": "11.0.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/cookie-parser": "1.4.10",
+    "@types/cors": "2.8.19",
+    "@types/express": "5.0.6",
+    "@types/hpp": "0.2.7",
+    "@types/node": "26.6.6",
+    "@types/supertest": "7.2.1",
+    "eslint": "10.14.0",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-import-x": "4.17.1",
+    "globals": "17.14.0",
+    "husky": "9.1.7",
+    "lint-staged": "17.6.0",
+    "pino-pretty": "13.2.0",
+    "prettier": "3.9.10",
+    "prisma": "6.19.3",
+    "supertest": "7.3.1",
+    "tsx": "4.23.15",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "typescript-eslint": "8.72.1",
+    "typescript7": "npm:typescript@7.0.2",
+    "vitest": "5.1.0"
+  },
+  "overrides": {
+    "deepmerge-ts": "8.0.2"
+  }
+}
